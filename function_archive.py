@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import usefull_functions as uf
 import collect_data as cd
+import cartopy.crs as ccrs
 
 
 def plot_example_ts():
@@ -23,6 +24,33 @@ def plot_example_ts():
     plt.tight_layout
     plt.savefig('example_timeseries_1')
 
+
+def plot_example_lead_cyc_data():
+    D = cd.Data('20181101', '20181130')
+
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.NorthPolarStereo(-45)}, figsize=(15, 10))
+    ax.coastlines(resolution='50m')
+    ax.set_extent(cd.arctic_extent, crs=ccrs.PlateCarree())
+    print(D.lat.shape, D.lon.shape, D.lead_data[29].shape)
+
+    # replace lead_data with cyc data if you want to display cycs
+    ax.pcolormesh(D.lon.reshape(440, 480), D.lat.reshape(440, 480), D.lead_data[0].reshape(440, 480),
+                  transform=ccrs.PlateCarree())
+    plt.show()
+
+
+def plot_nan_percentage():
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.NorthPolarStereo(-45)}, figsize=(15, 10))
+    ax.coastlines(resolution='50m')
+    ax.set_extent(cd.arctic_extent, crs=ccrs.PlateCarree())
+    ax.set_title('Lead data percentage of nan 20021101-20191231')
+
+    print(np.nanmax(D.lead_data_nonan[0]))
+    im = ax.scatter(D.lead_lon, D.lead_lat, s=1, marker='s', c=np.nanmean(D.lead_data_nonan, axis=0), cmap='viridis',
+                    transform=ccrs.PlateCarree())
+    fig.colorbar(im)
+    plt.tight_layout()
+    plt.savefig('nan_removed-lead-data')
 
 if __name__ == '__main__':
     pass
