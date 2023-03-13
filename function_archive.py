@@ -52,5 +52,125 @@ def plot_nan_percentage():
     plt.tight_layout()
     plt.savefig('nan_removed-lead-data')
 
+def rename_files():
+    file_names = os.listdir('./partial_adj')
+    start = 10
+
+    for file in sorted(file_names)[1:]:
+        id, slice_start, slice_end = re.findall('[0-9]+', file)
+        slice_start, slice_end = int(slice_start), int(slice_end)
+        # print(str(id).zfill(3), slice_start, slice_end, file)
+        os.rename('./partial_adj/' + file,
+                  './partial_adj/' + f'adj_id{str(int(slice_start / 100)).zfill(3)}_{slice_start}_{slice_end}.npy')
+
+
+def plot_nevents():
+    C = na.Coordinates(True)
+
+    X = np.load('./test_data_nskip=10/20021101_20191231_Xes.npy')
+    Y = np.load('./test_data_nskip=10/20021101_20191231_Yes.npy')
+
+    fig, ((ax1), (ax2)) = plt.subplots(1, 2, subplot_kw={"projection": ccrs.NorthPolarStereo(-45)}, figsize=(15, 10))
+    ax1.coastlines(resolution='50m')
+    ax2.coastlines(resolution='50m')
+
+    ax1.set_title('number of cyclone events')
+    im1 = ax1.scatter(C.clon, C.clat, c=np.sum(X, axis=1), s=5, cmap='viridis', transform=ccrs.PlateCarree())
+    fig.colorbar(im1, ax=ax1, orientation='horizontal')
+
+    ax2.set_title('number of lead events')
+    im2 = ax2.scatter(C.llon, C.llat, c=np.sum(Y, axis=1), s=5, cmap='viridis', transform=ccrs.PlateCarree())
+    fig.colorbar(im2, ax=ax2, orientation='horizontal')
+
+    plt.savefig('plots/nevents_nskip10.png')
+
+
+    def es_test():
+        X = np.load('./test_data_nskip=10/20021101_20191231_Xes.npy')
+        Y = np.load('./test_data_nskip=10/20021101_20191231_Yes.npy')
+        T = np.arange(0, X.shape[1], 1)
+
+        ncols = 2
+        arr = np.random.randint(0, 10, size=(30, ncols))
+        randX, randY = np.random.randint(0, 6000, size=ncols), np.random.randint(0, 6000, size=ncols)
+
+        fig, axs = plt.subplots(2, ncols, figsize=(15, 10))
+
+        for i, (ax, rX, rY) in enumerate(zip(axs.flatten(), randX, randX)):
+            Xs, Ys = X[rX], Y[rY]
+            norm = np.sqrt((np.sum(Xs) - 2) * (np.sum(Ys) - 2))
+            es1, hits = eventsync_1D(Ys, Xs, identify_events=True, tau_max=30)
+            print(es1, '\n', hits)
+            es2 = event_synchronization(Xs, Ys)
+            ax.bar(T[0:500], Xs[0:500])
+            ax.scatter(T[hits[:, 0]], np.repeat(.5, es1), c='red')
+            ax.set_title(f'cyc, sync1,2={es1 / norm, es2}')
+            axs[1, i].bar(T[0:500], Ys[0:500])
+            axs[1, i].set_title('lead')
+            axs[1, i].scatter(T[hits[:, 1]], np.repeat(.5, es1), c='red')
+
+            axs[1, i].set_xlim(0, 500)
+            ax.set_xlim(0, 500)
+
+            if i == ncols - 1:
+                break
+
+        plt.tight_layout()
+        plt.savefig('./plots/es_check.png')
+
+
+def ts_test():
+    print('load data')
+    ts_Y, ts_X = test_ts()
+    print('interpolate nan')
+    nans, y = np.isnan(ts_Y), lambda z: z.nonzero()[0]
+    ts_Y[nans] = np.interp(y(nans), y(~nans), ts_Y[~nans])
+
+    print('calculate events')
+    np.random.seed(42)
+    for point in np.random.randint(0, 60000, size=10):
+        print(point)
+        T = np.arange(0, ts_Y.shape[1], 1)
+
+        n_smooth_Y, n_smooth_X = 5, 4
+        ts_Y_smooth = moving_average(ts_Y[point], n_smooth_Y)
+        ts_X_smooth = moving_average(ts_X[point], n_smooth_X)
+
+        fig, axs = plt.subplots(2, 3, figsize=(20, 10))
+        axs = axs.flatten()
+
+        axs[0].plot(T, ts_X[point])
+        axs[0].set_title('cyc ts')
+
+        axs[1].plot(T[n_smooth_X - 1:], ts_X_smooth)
+        axs[1].set_title('cyc ts smooth')
+
+        t_range = 200
+        ts_X_max = select_max(np.copy(ts_X_smooth), np.quantile(ts_X_smooth, .95))
+        axs[2].scatter(T[n_smooth_X: - 1][:t_range], ts_X_max[:t_range])
+        axs[2].bar(T[n_smooth_X: - 1][:t_range], central_mass(ts_X_max, 5)[:t_range])
+        axs[2].plot(T[n_smooth_X - 1:][:t_range], ts_X_smooth[:t_range])
+        axs[2].set_title('cyc ts maxima')
+
+        ts_Y_max = select_max(np.copy(ts_Y_smooth), np.quantile(ts_Y_smooth, .95))
+
+        axs[5].scatter(T[n_smooth_Y: - 1][:t_range], ts_Y_max[:t_range])
+        axs[5].plot(T[n_smooth_Y - 1:][:t_range], ts_Y_smooth[:t_range])
+        axs[5].bar(T[n_smooth_Y: - 1][:t_range], central_mass(ts_Y_max, 5)[:t_range])
+        axs[5].set_title('lead ts maxima')
+
+        axs[4].plot(T[n_smooth_Y - 1:], ts_Y_smooth)
+        axs[4].set_title('lead ts smooth')
+
+        axs[3].plot(T, ts_Y[point])
+        axs[3].set_title('lead ts')
+
+        # central_mass(np.copy(ts_Y_max), np.copy(ts_Y_smooth), 5)
+
+        plt.savefig(f'./plots/test_ts_id{point}.png')
+
 if __name__ == '__main__':
+    arr = np.array([2, 0, 0, 2, 1, 1, 0, 1, 0, 0, 1])
+    arr = np.delete(arr, [1, 2])
+    print(arr)
     pass

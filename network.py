@@ -95,24 +95,24 @@ slices = get_slices()
 def pdist_wrapper(identifier):
     date_str = f'./data/20021101_20191231_'
 
-    sli = slices[identifier+22+104]
+    sli = slices[identifier]
     print('Start working on: ', sli)
     X, Y = np.load(date_str + 'Xes.npy')[sli], np.load(date_str + 'Yes.npy')
 
     start_time = datetime.datetime.now()
     A = pairwise_distances(X, Y, metric=event_synchronization)
     print('Finished: ', sli, 'in: ', datetime.datetime.now() - start_time)
-    np.save(f'./partial_adj/adj_id{21+104+identifier}_{sli.start}_{sli.stop}.npy', A)
+    np.save(f'./partial_adj/adj_id{identifier}_{sli.start}_{sli.stop}.npy', A)
     return None
 
 
 if __name__ == '__main__':
-    with Pool() as pool:
+    '''with Pool() as pool:
         # issue tasks to the thread pool
         res = pool.imap_unordered(pdist_wrapper, range(len(slices)))
 
         for _ in res:
-            pass
+            pass'''
 
     # Xtest, Ytest = np.random.randint(0, 100, size=(2, 40_000, 3), dtype='int8')
 
