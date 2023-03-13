@@ -132,7 +132,7 @@ def ts_test():
         print(point)
         T = np.arange(0, ts_Y.shape[1], 1)
 
-        n_smooth_Y, n_smooth_X = 5, 4
+        n_smooth_Y, n_smooth_X = 5, 5
         ts_Y_smooth = moving_average(ts_Y[point], n_smooth_Y)
         ts_X_smooth = moving_average(ts_X[point], n_smooth_X)
 

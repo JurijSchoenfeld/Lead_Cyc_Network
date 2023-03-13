@@ -41,6 +41,75 @@ def eventmatrix_from_ts(arr, threshold):
     return arr.astype('int8')  # return as 8-bit int matrix
 
 
+def moving_average(a, n=3):
+    ret = np.cumsum(a, dtype=float)
+    ret[n:] = ret[n:] - ret[:-n]
+    return ret[n - 1:] / n
+
+
+def select_max(arr, threshold):
+    rgl = (arr[:-1] < arr[1:])[1:]
+    lgr = (arr[1:] < arr[:-1])[:-1]
+    arr = arr[1:-1]
+
+    arr[(rgl + lgr)] = np.nan
+    arr[arr<threshold] = np.nan
+
+    return arr
+
+
+def central_mass(arr_max, max_event_spacing):
+    non_consecutive_max = []
+
+    max_inds = np.where(~np.isnan(arr_max))[0]
+    if np.size(max_inds) < 2:  # too few events
+        return np.zeros(shape=np.size(arr_max), dtype='int8')
+
+    skip = 0
+    for i, max_ind in enumerate(max_inds):
+        j = 1
+        consecutive_events = [max_ind]
+
+        if skip > 0:  # skip consecutive events if the first one was already detected
+            skip = skip - 1
+        else:
+            while True and i + j < np.size(max_inds):
+                # find all consecutive events
+                if max_inds[i + j] - max_inds[i + j - 1] <= max_event_spacing:
+                    consecutive_events.append(max_inds[i + j])
+
+                else:
+                    if len(consecutive_events) == 1:
+                        non_consecutive_max.append(consecutive_events[0])
+                    else:
+                        # calculate "central mass"
+                        cm, M = 0, 0
+                        for event in consecutive_events:
+                            cm += event * arr_max[event]
+                            M += arr_max[event]
+                        skip = len(consecutive_events) - 1
+                        non_consecutive_max.append(round(cm / M))
+                    break
+                j += 1
+
+    # append last max if it wasn't consecutive
+    if max_inds[-1] - max_inds[-2] > max_event_spacing:
+        non_consecutive_max.append(max_inds[-1])
+    # calculate central mass if last max where consecutive
+    else:
+        # calculate "central mass"
+        cm, M = 0, 0
+        for event in consecutive_events:
+            cm += event * arr_max[event]
+            M += arr_max[event]
+        non_consecutive_max.append(round(cm / M))
+
+    eventlike = np.zeros(shape=np.size(arr_max), dtype='int8')
+    eventlike[non_consecutive_max] = 1
+
+    return eventlike
+
+
 class Data:
     # This will be our main container that holds our data, given a certain time range
     def __init__(self, date1, date2):
@@ -78,41 +147,56 @@ class Data:
         self.lead_lon = lon.data[no_leads <= nan_threshold]
         self.lead_lat = lat.data[no_leads <= nan_threshold]
 
-        # handle NaN values
-        lead_data_nonan[np.isnan(lead_data_nonan)] = 0
-        cyc_data_nonan[np.isnan(lead_data_nonan)] = 0
+        # remove time series that have less than .1% avg lead fraction
+        min_lead_avg = .01
+        no_leads = np.nanmean(lead_data_nonan, axis=0)
+        lead_data_nonan = lead_data_nonan[:, no_leads > min_lead_avg]
+        cyc_data_nonan = cyc_data_nonan[:, no_leads > min_lead_avg]
+        self.lead_lon = self.lead_lon[no_leads > min_lead_avg]
+        self.lead_lat = self.lead_lat[no_leads > min_lead_avg]
 
-        # remove land mask from cyclone occurence data
-        # land mask for lead grid is contained in an old lead data set, that has a different lon lat box
-        # may be added later
+        np.save('./data/lon_event_detection2', self.lead_lon)
+        np.save('./data/lat_event_detection2', self.lead_lat)
+
+        # interpolate NaN values
+        ts_Y, ts_X = lead_data_nonan.T, cyc_data_nonan.T
+        nans, y = np.isnan(ts_Y), lambda z: z.nonzero()[0]
+        ts_Y[nans] = np.interp(y(nans), y(~nans), ts_Y[~nans])
+
+        # detect events
+        n_smooth_Y, n_smooth_X = 5, 5
+        Xs, Ys, Xs_smooth, Ys_smooth = [], [], [], []
+
+        print('smoothen')
+        for i, (X, Y) in enumerate(zip(ts_X, ts_Y)):
+            Xs_smooth.append(moving_average(X, n_smooth_X))
+            Ys_smooth.append(moving_average(Y, n_smooth_Y))
+
+        X_threshold = np.quantile(Xs_smooth, .9)
+
+        print('select maxima')
+        for i, (X_smooth, Y_smooth) in enumerate(zip(Xs_smooth, Ys_smooth)):
+            print(i)
+
+            # select maxima
+            X_max = select_max(np.copy(X_smooth), X_threshold)
+            Y_max = select_max(np.copy(Y_smooth), np.quantile(Y_smooth, .90))
+
+            # print(len(X_max))
+
+            # calculate central mass for consecutive maxima
+            X_eventlike = central_mass(X_max, n_smooth_X)
+            Y_eventlike = central_mass(Y_max, n_smooth_Y)
+
+            # append to list
+            Xs.append(X_eventlike)
+            Ys.append(Y_eventlike)
+
+        np.save('./data/Xes_event_detection2', np.array(Xs))
+        np.save('./data/Yes_event_detection2', np.array(Ys))
+
 
         # convert to event series
-        lead_eventlike = eventmatrix_from_ts(lead_data_nonan, .95)
-        cyc_eventlike = np.copy(cyc_data_nonan)
-        cyc_eventlike[cyc_eventlike <= .75] = 0
-        cyc_eventlike[cyc_eventlike > .75] = 1
-        cyc_eventlike = cyc_eventlike.astype('int8')
-
-        # remove locations with less than 10 cyclone events
-        cyc_events_ppixel = np.sum(cyc_eventlike, axis=0)
-        cyc_eventlike = cyc_eventlike[:, cyc_events_ppixel >= 10]
-        self.cyc_lon = self.lead_lon[cyc_events_ppixel >= 10]
-        self.cyc_lat = self.lead_lat[cyc_events_ppixel >= 10]
-
-        # remove locations with less than 100 lead events
-        lead_events_ppixel = np.sum(lead_eventlike, axis=0)
-        lead_eventlike = lead_eventlike[:, lead_events_ppixel >= 100]
-        self.lead_lon = self.lead_lon[lead_events_ppixel >= 100]
-        self.lead_lat = self.lead_lat[lead_events_ppixel >= 100]
-
-        # save transpose, this will parse to es-method
-        # first axis locations, second axis time
-        self.X = cyc_eventlike.T
-        self.Y = lead_eventlike.T
-
-        # another option to speed up calculation is to parse a precomputed version of the events
-        # now this has to be done in every iteration step
-        # may be added later
 
 
 def export_test_data(date1, date2, n_skip=10):
@@ -191,86 +275,37 @@ def test_ts():
     return lead_data_nonan.T, cyc_data_nonan.T
 
 
-def moving_average(a, n=3):
-    ret = np.cumsum(a, dtype=float)
-    ret[n:] = ret[n:] - ret[:-n]
-    return ret[n - 1:] / n
-
-
-def select_max(arr, threshold):
-    rgl = (arr[:-1] < arr[1:])[1:]
-    lgr = (arr[1:] < arr[:-1])[:-1]
-    arr = arr[1:-1]
-
-    arr[(rgl + lgr)] = np.nan
-    arr[arr<threshold] = np.nan
-
-    return arr
-
-
-def central_mass(arr_max, max_event_spacing):
-    non_consecutive_max = []
-
-    max_inds = np.where(~np.isnan(arr_max))[0]
-
-    skip = 0
-    for i, max_ind in enumerate(max_inds):
-        j = 1
-        consecutive_events = [max_ind]
-
-        if skip > 0:  # skip consecutive events if the first one was already detected
-            skip = skip - 1
-        else:
-            while True and i + j < np.size(max_inds):
-                # find all consecutive events
-                if max_inds[i + j] - max_inds[i + j - 1] <= max_event_spacing:
-                    consecutive_events.append(max_inds[i + j])
-
-                else:
-                    if len(consecutive_events) == 1:
-                        non_consecutive_max.append(consecutive_events[0])
-                    else:
-                        # calculate "central mass"
-                        cm, M = 0, 0
-                        for event in consecutive_events:
-                            cm += event * arr_max[event]
-                            M += arr_max[event]
-                        skip = len(consecutive_events) - 1
-                        non_consecutive_max.append(round(cm / M))
-                    break
-                j += 1
-
-    # append last max if it wasn't consecutive
-    if max_inds[-1] - max_inds[-2] > max_event_spacing:
-        non_consecutive_max.append(max_inds[-1])
-    # calculate central mass if last max where consecutive
-    else:
-        # calculate "central mass"
-        cm, M = 0, 0
-        for event in consecutive_events:
-            cm += event * arr_max[event]
-            M += arr_max[event]
-        non_consecutive_max.append(round(cm / (M + .000000001)))
-
-    eventlike = np.zeros(shape=np.size(arr_max), dtype='int8')
-    eventlike[non_consecutive_max] = 1
-
-    return eventlike
-
-
-
 
 
 if __name__ == '__main__':
     # export_processed_data('20021101', '20191231')
     # export_test_data('20021101', '20191231')
 
-    '''T = np.arange(0, 20, 1)
-    arr = np.random.randint(-3, 3, size=20)
-    plt.plot(T, arr)
-    plt.scatter(T[1:-1], select_max(arr, 0))
+    Data('20021101', '20191231')
 
-    plt.show()'''
+    X, Y = np.load('./data/Xes_event_detection2.npy'), np.load('./data/Yes_event_detection2.npy')
+    print(X.shape)
+    lon, lat = np.load('./data/lon_event_detection2.npy'), np.load('./data/lat_event_detection2.npy')
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, subplot_kw={"projection": ccrs.NorthPolarStereo(-45)}, figsize=(15, 10))
+    ax1.coastlines(resolution='50m')
+    ax1.set_extent(arctic_extent, crs=ccrs.PlateCarree())
+    im1 = ax1.scatter(lon, lat, s=1, marker='s', c=np.sum(Y, axis=1), cmap='viridis',
+                    transform=ccrs.PlateCarree())
+    fig.colorbar(im1, orientation='horizontal')
+
+    ax2.coastlines(resolution='50m')
+    ax2.set_extent(arctic_extent, crs=ccrs.PlateCarree())
+    im2 = ax2.scatter(lon, lat, s=.5, marker='s', c=np.sum(X, axis=1), cmap='viridis',
+                      transform=ccrs.PlateCarree())
+    fig.colorbar(im2, orientation='horizontal')
+
+    '''fig, (ax1, ax2) = plt.subplots(1, 2)
+    ax1.hist(np.sum(X, axis=1), bins=20)
+    ax2.hist(np.sum(Y, axis=1), bins=20)'''
+
+
+    plt.savefig('nevents_detection2.png')
 
 
 
