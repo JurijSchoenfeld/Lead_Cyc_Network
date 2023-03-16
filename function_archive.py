@@ -64,7 +64,7 @@ def rename_files():
                   './partial_adj/' + f'adj_id{str(int(slice_start / 100)).zfill(3)}_{slice_start}_{slice_end}.npy')
 
 
-def plot_nevents():
+def plot_nevents_skip():
     C = na.Coordinates(True)
 
     X = np.load('./test_data_nskip=10/20021101_20191231_Xes.npy')
@@ -169,8 +169,43 @@ def ts_test():
 
         plt.savefig(f'./plots/test_ts_id{point}.png')
 
+
+def plot_nevents():
+    Data('20021101', '20191231')
+
+    X, Y = np.load('./data/Xes_event_detection2.npy'), np.load('./data/Yes_event_detection2.npy')
+    print(X.shape)
+    print(np.sum(X, axis=1))
+    print(np.sum(Y, axis=1))
+    lon, lat = np.load('./data/lon_event_detection2.npy'), np.load('./data/lat_event_detection2.npy')
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, subplot_kw={"projection": ccrs.NorthPolarStereo(-45)}, figsize=(15, 10))
+    ax1.coastlines(resolution='50m')
+    ax1.set_extent(arctic_extent, crs=ccrs.PlateCarree())
+    im1 = ax1.scatter(lon, lat, s=1, marker='s', c=np.sum(Y, axis=1), cmap='viridis',
+                      transform=ccrs.PlateCarree())
+    fig.colorbar(im1, orientation='horizontal')
+
+    ax2.coastlines(resolution='50m')
+    ax2.set_extent(arctic_extent, crs=ccrs.PlateCarree())
+    im2 = ax2.scatter(lon, lat, s=1, marker='s', c=np.sum(X, axis=1), cmap='viridis',
+                      transform=ccrs.PlateCarree())
+    fig.colorbar(im2, orientation='horizontal')
+
+    '''fig, (ax1, ax2) = plt.subplots(1, 2)
+    ax1.hist(np.sum(X, axis=1), bins=20)
+    ax2.hist(np.sum(Y, axis=1), bins=20)'''
+
+    plt.savefig('nevents_detection2.png')
+
 if __name__ == '__main__':
-    arr = np.array([2, 0, 0, 2, 1, 1, 0, 1, 0, 0, 1])
-    arr = np.delete(arr, [1, 2])
+    arr = np.random.randint(0, 100, size=(20, 5))
     print(arr)
+
+    quan = np.quantile(arr, .5, axis=1)
+    quan = np.repeat(quan, 5).reshape(arr.shape)
+    event_arr = np.copy(arr)
+    event_arr[arr < quan] = 0
+    event_arr[arr >= quan] = 1
+    print(event_arr)
     pass
